@@ -1202,7 +1202,11 @@ pub type SignedTransaction = Envelope<SenderSignedData, AuthoritySignInfo>;
 pub type VerifiedSignedTransaction = VerifiedEnvelope<SenderSignedData, AuthoritySignInfo>;
 
 pub type CertifiedTransaction = Envelope<SenderSignedData, AuthorityStrongQuorumSignInfo>;
-pub type TxCertAndSignedEffects = (CertifiedTransaction, SignedTransactionEffects);
+pub type TxCertAndSignedEffects = (
+    CertifiedTransaction,
+    SignedTransactionEffects,
+    TransactionEvents,
+);
 
 pub type VerifiedCertificate = VerifiedEnvelope<SenderSignedData, AuthorityStrongQuorumSignInfo>;
 pub type TrustedCertificate = TrustedEnvelope<SenderSignedData, AuthorityStrongQuorumSignInfo>;
@@ -1337,11 +1341,13 @@ impl From<TransactionDigest> for TransactionInfoRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HandleCertificateResponse {
     pub signed_effects: SignedTransactionEffects,
+    pub events: TransactionEvents,
 }
 
 #[derive(Clone, Debug)]
 pub struct VerifiedHandleCertificateResponse {
     pub signed_effects: VerifiedSignedTransactionEffects,
+    pub events: TransactionEvents,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1349,6 +1355,7 @@ pub struct TransactionInfoResponse<
     TxnT = SignedTransaction,
     CertT = CertifiedTransaction,
     EffectsT = SignedTransactionEffects,
+    EventT = TransactionEvents,
 > {
     // The signed transaction response to handle_transaction
     pub signed_transaction: Option<TxnT>,
@@ -1357,12 +1364,14 @@ pub struct TransactionInfoResponse<
     // The effects resulting from a successful execution should
     // contain ObjectRef created, mutated, deleted and events.
     pub signed_effects: Option<EffectsT>,
+    pub events: Option<EventT>,
 }
 
 pub type VerifiedTransactionInfoResponse = TransactionInfoResponse<
     VerifiedSignedTransaction,
     VerifiedCertificate,
     VerifiedSignedTransactionEffects,
+    TransactionEvents,
 >;
 
 impl From<VerifiedTransactionInfoResponse> for TransactionInfoResponse {
@@ -1371,6 +1380,7 @@ impl From<VerifiedTransactionInfoResponse> for TransactionInfoResponse {
             signed_transaction,
             certified_transaction,
             signed_effects,
+            events,
         } = v;
 
         let certified_transaction = certified_transaction.map(|c| c.into_inner());
@@ -1380,6 +1390,7 @@ impl From<VerifiedTransactionInfoResponse> for TransactionInfoResponse {
             signed_transaction,
             certified_transaction,
             signed_effects,
+            events,
         }
     }
 }
@@ -1950,8 +1961,9 @@ pub struct TransactionEffects {
     /// The updated gas object reference. Have a dedicated field for convenient access.
     /// It's also included in mutated.
     pub gas_object: (ObjectRef, Owner),
-    /// The events emitted during execution. Note that only successful transactions emit events
-    pub events: Vec<Event>,
+    /// The events emitted during execution.
+    pub events_digest: TransactionEventsDigest,
+    pub events_count: usize,
     /// The set of transaction digests this transaction depends on.
     pub dependencies: Vec<TransactionDigest>,
 }
@@ -1990,11 +2002,40 @@ impl TransactionEffects {
     }
 }
 
+#[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionEvents {
+    pub data: Vec<Event>,
+}
+
 impl Message for TransactionEffectsDigest {
     type DigestType = TransactionEffectsDigest;
 
     fn digest(&self) -> Self::DigestType {
         *self
+    }
+
+    fn verify(&self) -> SuiResult {
+        Ok(())
+    }
+}
+
+impl Message for TransactionEventsDigest {
+    type DigestType = TransactionEventsDigest;
+
+    fn digest(&self) -> Self::DigestType {
+        *self
+    }
+
+    fn verify(&self) -> SuiResult {
+        Ok(())
+    }
+}
+
+impl Message for TransactionEvents {
+    type DigestType = TransactionEventsDigest;
+
+    fn digest(&self) -> Self::DigestType {
+        TransactionEventsDigest(sha3_hash(self))
     }
 
     fn verify(&self) -> SuiResult {
@@ -2085,7 +2126,8 @@ impl Default for TransactionEffects {
                 random_object_ref(),
                 Owner::AddressOwner(SuiAddress::default()),
             ),
-            events: Vec::new(),
+            events_digest: TransactionEventsDigest::random(),
+            events_count: 0,
             dependencies: Vec::new(),
         }
     }
@@ -2413,6 +2455,7 @@ pub enum ExecuteTransactionResponse {
         Box<(
             CertifiedTransaction,
             CertifiedTransactionEffects,
+            TransactionEvents,
             IsTransactionExecutedLocally,
         )>,
     ),
@@ -2427,6 +2470,7 @@ pub struct QuorumDriverRequest {
 pub struct QuorumDriverResponse {
     pub tx_cert: VerifiedCertificate,
     pub effects_cert: VerifiedCertifiedTransactionEffects,
+    pub events: TransactionEvents,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

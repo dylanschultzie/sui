@@ -23,7 +23,6 @@ use move_core_types::identifier::Identifier;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use move_core_types::value::{MoveStruct, MoveStructLayout, MoveValue};
 use schemars::JsonSchema;
-use serde::ser::Error;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -31,7 +30,7 @@ use serde_with::serde_as;
 use sui_json::SuiJsonValue;
 use sui_types::base_types::{
     AuthorityName, ObjectDigest, ObjectID, ObjectInfo, ObjectRef, SequenceNumber, SuiAddress,
-    TransactionDigest, TransactionEffectsDigest,
+    TransactionDigest, TransactionEffectsDigest, TransactionEventsDigest,
 };
 use sui_types::coin::CoinMetadata;
 use sui_types::committee::EpochId;
@@ -44,10 +43,9 @@ use sui_types::filter::{EventFilter, TransactionFilter};
 use sui_types::gas::GasCostSummary;
 use sui_types::gas_coin::GasCoin;
 use sui_types::messages::{
-    CallArg, CertifiedTransaction, CertifiedTransactionEffects, ExecuteTransactionResponse,
-    ExecutionStatus, GenesisObject, InputObjectKind, MoveModulePublish, ObjectArg, Pay, PayAllSui,
-    PaySui, SingleTransactionKind, TransactionData, TransactionEffects, TransactionKind,
-    VerifiedCertificate,
+    CallArg, CertifiedTransaction, CertifiedTransactionEffects, ExecutionStatus, GenesisObject,
+    InputObjectKind, MoveModulePublish, ObjectArg, Pay, PayAllSui, PaySui, SingleTransactionKind,
+    TransactionData, TransactionEffects, TransactionEvents, TransactionKind, VerifiedCertificate,
 };
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 use sui_types::move_package::{disassemble_modules, MovePackage};
@@ -348,8 +346,8 @@ pub enum MoveFunctionArgType {
 pub struct SuiTransactionResponse {
     pub certificate: SuiCertifiedTransaction,
     pub effects: SuiTransactionEffects,
+    pub events: SuiTransactionEvents,
     pub timestamp_ms: Option<u64>,
-    pub parsed_data: Option<SuiParsedTransactionResponse>,
 }
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema)]
@@ -357,46 +355,7 @@ pub struct SuiTransactionAuthSignersResponse {
     pub signers: Vec<AuthorityName>,
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
-pub enum SuiParsedTransactionResponse {
-    Publish(SuiParsedPublishResponse),
-    MergeCoin(SuiParsedMergeCoinResponse),
-    SplitCoin(SuiParsedSplitCoinResponse),
-}
-
-impl SuiParsedTransactionResponse {
-    pub fn to_publish_response(self) -> Result<SuiParsedPublishResponse, SuiError> {
-        match self {
-            SuiParsedTransactionResponse::Publish(resp) => Ok(resp),
-            _ => Err(SuiError::UnexpectedMessage),
-        }
-    }
-
-    pub fn to_merge_coin_response(self) -> Result<SuiParsedMergeCoinResponse, SuiError> {
-        match self {
-            SuiParsedTransactionResponse::MergeCoin(resp) => Ok(resp),
-            _ => Err(SuiError::UnexpectedMessage),
-        }
-    }
-
-    pub fn to_split_coin_response(self) -> Result<SuiParsedSplitCoinResponse, SuiError> {
-        match self {
-            SuiParsedTransactionResponse::SplitCoin(resp) => Ok(resp),
-            _ => Err(SuiError::UnexpectedMessage),
-        }
-    }
-}
-
-impl Display for SuiParsedTransactionResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            SuiParsedTransactionResponse::Publish(r) => r.fmt(f),
-            SuiParsedTransactionResponse::MergeCoin(r) => r.fmt(f),
-            SuiParsedTransactionResponse::SplitCoin(r) => r.fmt(f),
-        }
-    }
-}
-
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug, JsonSchema)]
 pub enum SuiTBlsSignObjectCommitmentType {
     /// Check that the object is committed by the consensus.
@@ -415,12 +374,13 @@ pub struct SuiTBlsSignRandomnessObjectResponse {
 pub struct SuiExecuteTransactionResponse {
     pub certificate: SuiCertifiedTransaction,
     pub effects: SuiCertifiedTransactionEffects,
+    pub events: SuiTransactionEvents,
     // If the transaction is confirmed to be executed locally
     // before this response.
     pub confirmed_local_execution: bool,
 }
 
-impl SuiExecuteTransactionResponse {
+/*impl SuiExecuteTransactionResponse {
     pub fn from_execute_transaction_response(
         resp: ExecuteTransactionResponse,
         resolver: &impl GetModule,
@@ -430,7 +390,7 @@ impl SuiExecuteTransactionResponse {
                 let (certificate, effects, is_executed_locally) = *cert;
                 let certificate: SuiCertifiedTransaction = certificate.try_into()?;
                 let effects: SuiCertifiedTransactionEffects =
-                    SuiCertifiedTransactionEffects::try_from(effects, resolver)?;
+                    SuiCertifiedTransactionEffects::try_from(effects)?;
                 SuiExecuteTransactionResponse {
                     certificate,
                     effects,
@@ -439,7 +399,7 @@ impl SuiExecuteTransactionResponse {
             }
         })
     }
-}
+}*/
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -478,62 +438,6 @@ impl TryFrom<Object> for SuiCoinMetadata {
             description,
             icon_url,
         })
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SuiParsedSplitCoinResponse {
-    /// The updated original coin object after split
-    pub updated_coin: SuiParsedObject,
-    /// All the newly created coin objects generated from the split
-    pub new_coins: Vec<SuiParsedObject>,
-    /// The updated gas payment object after deducting payment
-    pub updated_gas: SuiParsedObject,
-}
-
-impl Display for SuiParsedSplitCoinResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut writer = String::new();
-        writeln!(writer, "{}", "----- Split Coin Results ----".bold())?;
-
-        let coin = GasCoin::try_from(&self.updated_coin).map_err(fmt::Error::custom)?;
-        writeln!(writer, "Updated Coin : {}", coin)?;
-        let mut new_coin_text = Vec::new();
-        for coin in &self.new_coins {
-            let coin = GasCoin::try_from(coin).map_err(fmt::Error::custom)?;
-            new_coin_text.push(format!("{coin}"))
-        }
-        writeln!(
-            writer,
-            "New Coins : {}",
-            new_coin_text.join(",\n            ")
-        )?;
-        let gas_coin = GasCoin::try_from(&self.updated_gas).map_err(fmt::Error::custom)?;
-        writeln!(writer, "Updated Gas : {}", gas_coin)?;
-        write!(f, "{}", writer)
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SuiParsedMergeCoinResponse {
-    /// The updated original coin object after merge
-    pub updated_coin: SuiParsedObject,
-    /// The updated gas payment object after deducting payment
-    pub updated_gas: SuiParsedObject,
-}
-
-impl Display for SuiParsedMergeCoinResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut writer = String::new();
-        writeln!(writer, "{}", "----- Merge Coin Results ----".bold())?;
-
-        let coin = GasCoin::try_from(&self.updated_coin).map_err(fmt::Error::custom)?;
-        writeln!(writer, "Updated Coin : {}", coin)?;
-        let gas_coin = GasCoin::try_from(&self.updated_gas).map_err(fmt::Error::custom)?;
-        writeln!(writer, "Updated Gas : {}", gas_coin)?;
-        write!(f, "{}", writer)
     }
 }
 
@@ -988,45 +892,6 @@ impl TryFrom<&SuiMoveStruct> for GasCoin {
         Err(SuiError::TypeError {
             error: format!("Struct is not a gas coin: {move_struct:?}"),
         })
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SuiParsedPublishResponse {
-    /// The newly published package object reference.
-    pub package: SuiObjectRef,
-    /// List of Move objects created as part of running the module initializers in the package
-    pub created_objects: Vec<SuiParsedObject>,
-    /// The updated gas payment object after deducting payment
-    pub updated_gas: SuiParsedObject,
-}
-
-impl Display for SuiParsedPublishResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut writer = String::new();
-        writeln!(writer, "{}", "----- Publish Results ----".bold())?;
-        writeln!(
-            writer,
-            "{}",
-            format!(
-                "The newly published package object ID: {:?}\n",
-                self.package.object_id
-            )
-            .bold()
-        )?;
-        if !self.created_objects.is_empty() {
-            writeln!(
-                writer,
-                "List of objects created by running module initializers:"
-            )?;
-            for obj in &self.created_objects {
-                writeln!(writer, "{}\n", obj)?;
-            }
-        }
-        let gas_coin = GasCoin::try_from(&self.updated_gas).map_err(fmt::Error::custom)?;
-        writeln!(writer, "Updated Gas : {}", gas_coin)?;
-        write!(f, "{}", writer)
     }
 }
 
@@ -1856,11 +1721,10 @@ impl Display for SuiCertifiedTransactionEffects {
     }
 }
 
-impl SuiCertifiedTransactionEffects {
-    fn try_from(
-        cert: CertifiedTransactionEffects,
-        resolver: &impl GetModule,
-    ) -> Result<Self, anyhow::Error> {
+impl TryFrom<CertifiedTransactionEffects> for SuiCertifiedTransactionEffects {
+    type Error = anyhow::Error;
+
+    fn try_from(cert: CertifiedTransactionEffects) -> Result<Self, Self::Error> {
         let digest = *cert.digest();
         let (effects, auth_sign_info) = cert.into_data_and_sig();
         // We should always have a signature here.
@@ -1869,7 +1733,7 @@ impl SuiCertifiedTransactionEffects {
         }
         Ok(Self {
             transaction_effects_digest: digest,
-            effects: SuiTransactionEffects::try_from(effects, resolver)?,
+            effects: effects.into(),
             auth_sign_info: SuiAuthorityStrongQuorumSignInfo::from(&auth_sign_info),
         })
     }
@@ -1907,9 +1771,8 @@ pub struct SuiTransactionEffects {
     // The updated gas object reference. Have a dedicated field for convenient access.
     // It's also included in mutated.
     pub gas_object: OwnedObjectRef,
-    /// The events emitted during execution. Note that only successful transactions emit events
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub events: Vec<SuiEvent>,
+    /// The events emitted during execution.
+    pub events_digest: TransactionEventsDigest,
     /// The set of transaction digests this transaction depends on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<TransactionDigest>,
@@ -1920,12 +1783,11 @@ impl SuiTransactionEffects {
     pub fn mutated_excluding_gas(&self) -> impl Iterator<Item = &OwnedObjectRef> {
         self.mutated.iter().filter(|o| *o != &self.gas_object)
     }
+}
 
-    pub fn try_from(
-        effect: TransactionEffects,
-        resolver: &impl GetModule,
-    ) -> Result<Self, anyhow::Error> {
-        Ok(Self {
+impl From<TransactionEffects> for SuiTransactionEffects {
+    fn from(effect: TransactionEffects) -> Self {
+        Self {
             status: effect.status.into(),
             gas_used: effect.gas_used.into(),
             shared_objects: to_sui_object_ref(effect.shared_objects),
@@ -1939,13 +1801,9 @@ impl SuiTransactionEffects {
                 owner: effect.gas_object.1,
                 reference: effect.gas_object.0.into(),
             },
-            events: effect
-                .events
-                .into_iter()
-                .map(|event| SuiEvent::try_from(event, resolver))
-                .collect::<Result<_, _>>()?,
+            events_digest: effect.events_digest,
             dependencies: effect.dependencies,
-        })
+        }
     }
 }
 
@@ -1999,6 +1857,27 @@ impl Display for SuiTransactionEffects {
     }
 }
 
+#[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename = "TransactionEffects", rename_all = "camelCase")]
+pub struct SuiTransactionEvents {
+    pub data: Vec<SuiEvent>,
+}
+
+impl SuiTransactionEvents {
+    pub fn try_from(
+        events: TransactionEvents,
+        resolver: &impl GetModule,
+    ) -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            data: events
+                .data
+                .into_iter()
+                .map(|event| SuiEvent::try_from(event, resolver))
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+
 /// The response from processing a dev inspect transaction
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename = "DevInspectResults", rename_all = "camelCase")]
@@ -2033,9 +1912,7 @@ impl DevInspectResults {
     pub fn new(
         effects: TransactionEffects,
         return_values: Result<Vec<(usize, ExecutionResult)>, ExecutionError>,
-        resolver: &impl GetModule,
     ) -> Result<Self, anyhow::Error> {
-        let effects = SuiTransactionEffects::try_from(effects, resolver)?;
         let results = match return_values {
             Err(e) => Err(format!("{}", e)),
             Ok(srvs) => Ok(srvs
@@ -2058,7 +1935,11 @@ impl DevInspectResults {
                 })
                 .collect()),
         };
-        Ok(Self { effects, results })
+        Ok(Self {
+            effects: effects.into(),
+            //events: SuiTransactionEvents::try_from(events, resolver)?,
+            results,
+        })
     }
 }
 

@@ -484,6 +484,7 @@ impl QuorumDriver {
         let SuiExecuteTransactionResponse {
             certificate,
             effects,
+            events,
             confirmed_local_execution,
         } = TransactionExecutionApiClient::execute_transaction_serialized_sig(
             &self.api.http,
@@ -496,11 +497,11 @@ impl QuorumDriver {
         Ok(match request_type {
             ExecuteTransactionRequestType::WaitForEffectsCert => TransactionExecutionResult {
                 tx_digest: certificate.transaction_digest,
-                tx_cert: Some(certificate),
-                effects: Some(effects.effects),
+                tx_cert: certificate,
+                effects: effects.effects,
+                events,
                 confirmed_local_execution,
                 timestamp_ms: None,
-                parsed_data: None,
             },
             ExecuteTransactionRequestType::WaitForLocalExecution => {
                 if !confirmed_local_execution {
@@ -509,11 +510,11 @@ impl QuorumDriver {
                 }
                 TransactionExecutionResult {
                     tx_digest: certificate.transaction_digest,
-                    tx_cert: Some(certificate),
-                    effects: Some(effects.effects),
+                    tx_cert: certificate,
+                    effects: effects.effects,
+                    events,
                     confirmed_local_execution,
                     timestamp_ms: None,
-                    parsed_data: None,
                 }
             }
         })
