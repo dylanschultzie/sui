@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use bytes::Bytes;
+use futures::future::{select, Either};
 use futures::FutureExt;
 use itertools::Itertools;
 use narwhal_types::TransactionProto;
@@ -34,7 +35,9 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::epoch::reconfiguration::{ReconfigState, ReconfigurationInitiator};
 use mysten_metrics::spawn_monitored_task;
+use narwhal_test_utils::transaction;
 use sui_simulator::anemo::PeerId;
 use sui_simulator::narwhal_network::connectivity::ConnectionStatus;
 use sui_types::base_types::AuthorityName;
@@ -326,12 +329,13 @@ impl ConsensusAdapter {
         committee: &Committee,
         ourselves: &AuthorityName,
         transaction: &ConsensusTransaction,
-    ) -> bool {
+        exclusions: Vec<usize>,
+    ) -> (bool, usize) {
         let tx_digest;
         if let ConsensusTransactionKind::UserTransaction(certificate) = &transaction.kind {
             tx_digest = certificate.digest();
         } else {
-            return true;
+            return (true, 0);
         }
         let positions = order_validators_for_submission(committee, tx_digest);
 
@@ -357,7 +361,8 @@ impl ConsensusAdapter {
         &self,
         ourselves: &AuthorityName,
         positions: Vec<AuthorityName>,
-    ) -> bool {
+        exclusions: Vec<usize>,
+    ) -> (bool, usize) {
         let (our_position, _) = positions
             .clone()
             .into_iter()
@@ -370,7 +375,7 @@ impl ConsensusAdapter {
                 // if we are the running validator in the first position
                 // we are responsible for submission
                 self.populate_position_metric(i);
-                return true;
+                return (true, i);
             }
 
             let connection_to_first_validator = self
@@ -387,7 +392,7 @@ impl ConsensusAdapter {
             if connection_to_first_validator == &ConnectionStatus::Connected {
                 // If we are connected to the validator at the first position, we assume they
                 // will submit the transaction, so we don't need to submit it ourselves
-                return false;
+                return (false, i);
             }
 
             // if we don't have connection to the first validator, we don't expect that they are
@@ -396,7 +401,7 @@ impl ConsensusAdapter {
             i += 1;
             if i >= positions.len() {
                 self.populate_position_metric(i);
-                return true;
+                return (true, i);
             }
         }
     }
@@ -472,10 +477,6 @@ impl ConsensusAdapter {
             epoch_store.record_epoch_pending_certs_process_time_metric();
         }
 
-        let processed_waiter = epoch_store
-            .consensus_message_processed_notify(transaction.key())
-            .boxed();
-
         let transaction_key = transaction.key();
         let _monitor = CancelOnDrop(spawn_monitored_task!(async {
             let mut i = 0u64;
@@ -488,57 +489,33 @@ impl ConsensusAdapter {
             }
         }));
 
-        let should_submit =
-            self.should_submit(epoch_store.committee(), &self.authority, &transaction);
-
-        if should_submit {
-            debug!("Submitting {transaction_key:?} to consensus");
-
-            {
-                let ack_start = Instant::now();
-                let mut retries: u32 = 0;
-                while let Err(e) = self
-                    .consensus_client
-                    .submit_to_consensus(&transaction, epoch_store)
-                    .await
-                {
-                    // This can happen during Narwhal reconfig, so wait for a few retries.
-                    if retries > 3 {
-                        error!(
-                            "Error submitting transaction to own narwhal worker: {:?}",
-                            e
-                        );
-                    }
-                    self.opt_metrics.as_ref().map(|metrics| {
-                        metrics.sequencing_certificate_failures.inc();
-                    });
-                    retries += 1;
-                    time::sleep(Duration::from_secs(10)).await;
-                }
-
-                // we want to record the num of retries when reporting latency but to avoid label
-                // cardinality we do some simple bucketing to give us a good enough idea of how
-                // many retries happened associated with the latency.
-                let bucket = match retries {
-                    0..=10 => retries.to_string(), // just report the retry count as is
-                    11..=20 => "between_10_and_20".to_string(),
-                    21..=50 => "between_20_and_50".to_string(),
-                    51..=100 => "between_50_and_100".to_string(),
-                    _ => "over_100".to_string(),
-                };
-
-                self.opt_metrics.as_ref().map(|metrics| {
-                    metrics
-                        .sequencing_acknowledge_latency
-                        .with_label_values(&[&bucket])
-                        .observe(ack_start.elapsed().as_secs_f64());
-                });
+        let mut tx_submitted = false;
+        while !tx_submitted {
+            let (should_submit, position) =
+                self.should_submit(epoch_store.committee(), &self.authority, &transaction);
+            if should_submit {
+                self.submit_after_selected(transaction.clone(), epoch_store)
+                    .await;
+                tx_submitted = true;
+                continue;
             }
-            debug!("Submitted {transaction_key:?} to consensus");
-            processed_waiter
-                .await
-                .expect("Storage error when waiting for consensus message processed");
+
+            // We need to wait for some delay until we submit transaction to the consensus
+            // However, if transaction is received by consensus while we wait, we don't need to wait
+            let sleep_timer = tokio::time::sleep(Duration::from_secs(7));
+            let processed_waiter = epoch_store
+                .consensus_message_processed_notify(transaction.key())
+                .boxed();
+            match select(processed_waiter, Box::pin(sleep_timer)).await {
+                Either::Left((processed, _await_submit)) => {
+                    processed.expect("Storage error when waiting for consensus message processed");
+                }
+                Either::Right(((), processed_waiter)) => {
+                    todo!();
+                }
+            };
         }
+
         debug!("{transaction_key:?} processed by consensus");
         epoch_store
             .remove_pending_consensus_transaction(&transaction.key())
@@ -575,6 +552,57 @@ impl ConsensusAdapter {
         self.opt_metrics.as_ref().map(|metrics| {
             metrics.sequencing_certificate_success.inc();
         });
+    }
+
+    async fn submit_after_selected(
+        self: &Arc<Self>,
+        transaction: ConsensusTransaction,
+        epoch_store: &Arc<AuthorityPerEpochStore>,
+    ) {
+        let transaction_key = transaction.key();
+        debug!("Submitting {transaction_key:?} to consensus");
+
+        {
+            let ack_start = Instant::now();
+            let mut retries: u32 = 0;
+            while let Err(e) = self
+                .consensus_client
+                .submit_to_consensus(&transaction, epoch_store)
+                .await
+            {
+                // This can happen during Narwhal reconfig, so wait for a few retries.
+                if retries > 3 {
+                    error!(
+                        "Error submitting transaction to own narwhal worker: {:?}",
+                        e
+                    );
+                }
+                self.opt_metrics.as_ref().map(|metrics| {
+                    metrics.sequencing_certificate_failures.inc();
+                });
+                retries += 1;
+                time::sleep(Duration::from_secs(10)).await;
+            }
+
+            // we want to record the num of retries when reporting latency but to avoid label
+            // cardinality we do some simple bucketing to give us a good enough idea of how
+            // many retries happened associated with the latency.
+            let bucket = match retries {
+                0..=10 => retries.to_string(), // just report the retry count as is
+                11..=20 => "between_10_and_20".to_string(),
+                21..=50 => "between_20_and_50".to_string(),
+                51..=100 => "between_50_and_100".to_string(),
+                _ => "over_100".to_string(),
+            };
+
+            self.opt_metrics.as_ref().map(|metrics| {
+                metrics
+                    .sequencing_acknowledge_latency
+                    .with_label_values(&[&bucket])
+                    .observe(ack_start.elapsed().as_secs_f64());
+            });
+        }
+        debug!("Submitted {transaction_key:?} to consensus");
     }
 }
 
@@ -699,8 +727,6 @@ impl<'a> Drop for InflightDropGuard<'a> {
         }
     }
 }
-
-use crate::epoch::reconfiguration::{ReconfigState, ReconfigurationInitiator};
 
 #[async_trait::async_trait]
 impl SubmitToConsensus for Arc<ConsensusAdapter> {
