@@ -84,6 +84,7 @@ export class DAppInterface {
                 transaction: {
                     type: 'v2',
                     data: transaction,
+                    account: '',
                 },
             }),
             (response) => response.result

@@ -95,10 +95,14 @@ export class ContentScriptConnection extends Connection {
                     this.permissionReply(permission, msg.id);
                 }
             } else if (isExecuteTransactionRequest(payload)) {
-                const allowed = await Permissions.hasPermissions(this.origin, [
-                    'viewAccount',
-                    'suggestTransactions',
-                ]);
+                const allowed = await Permissions.hasPermissions(
+                    this.origin,
+                    ['viewAccount', 'suggestTransactions'],
+                    null,
+                    (payload.transaction.type === 'v2' &&
+                        payload.transaction.account) ||
+                        undefined
+                );
                 if (allowed) {
                     const result = await Transactions.executeOrSignTransaction(
                         { tx: payload.transaction },
@@ -117,10 +121,12 @@ export class ContentScriptConnection extends Connection {
                     this.sendNotAllowedError(msg.id);
                 }
             } else if (isSignTransactionRequest(payload)) {
-                const allowed = await Permissions.hasPermissions(this.origin, [
-                    'viewAccount',
-                    'suggestTransactions',
-                ]);
+                const allowed = await Permissions.hasPermissions(
+                    this.origin,
+                    ['viewAccount', 'suggestTransactions'],
+                    null,
+                    payload.transaction.account
+                );
                 if (allowed) {
                     const result = await Transactions.executeOrSignTransaction(
                         { sign: payload.transaction },

@@ -1,15 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import { useActiveAddress } from '../../hooks/useActiveAddress';
+import { permissionsSelectors } from '../../redux/slices/permissions';
 import { Permissions } from './Permissions';
 import { SummaryCard } from './SummaryCard';
 import { TransactionSummaryCard } from './TransactionSummaryCard';
 import { TransactionTypeCard } from './TransactionTypeCard';
 import Loading from '_components/loading';
-import UserApproveContainer from '_components/user-approve-container';
+import { UserApproveContainer } from '_components/user-approve-container';
 import { useAppDispatch, useAppSelector } from '_hooks';
 import {
     loadTransactionResponseMetadata,
@@ -21,6 +23,7 @@ import {
 import type {
     SuiMoveNormalizedType,
     MoveCallTransaction,
+    SuiAddress,
 } from '@mysten/sui.js';
 import type { RootState } from '_redux/RootReducer';
 
@@ -39,6 +42,45 @@ interface TypeReference {
 }
 
 const TX_CONTEXT_TYPE = '0x2::tx_context::TxContext';
+
+function useHasPermissionGuard(
+    origin: string | null,
+    addressForTransaction: SuiAddress | null,
+    onNoPermissionCallback: () => void
+) {
+    const [loading, setLoading] = useState(true);
+    const permissionsInitialized = useAppSelector(
+        ({ permissions: { initialized } }) => initialized
+    );
+    const permission = useAppSelector(
+        (state) =>
+            (origin &&
+                permissionsSelectors
+                    .selectAll(state)
+                    .find(
+                        ({ origin: permissionOrigin }) =>
+                            permissionOrigin === origin
+                    )) ||
+            null
+    );
+    const onNoPermissionCallbackRef = useRef(onNoPermissionCallback);
+    onNoPermissionCallbackRef.current = onNoPermissionCallback;
+    useEffect(() => {
+        if (origin && addressForTransaction && permissionsInitialized) {
+            const hasPermission = permission?.accounts.includes(
+                addressForTransaction
+            );
+            if (!hasPermission) {
+                if (typeof onNoPermissionCallbackRef.current === 'function') {
+                    onNoPermissionCallbackRef.current();
+                }
+            } else {
+                setLoading(false);
+            }
+        }
+    }, [permission, origin, addressForTransaction, permissionsInitialized]);
+    return loading;
+}
 
 /** Takes a normalized move type and returns the address information contained within it */
 function unwrapTypeReference(
@@ -80,21 +122,45 @@ export function DappTxApprovalPage() {
     const txRequest = useAppSelector(txRequestSelector);
     const loading = txRequestsLoading;
     const dispatch = useAppDispatch();
+    const activeAddress = useActiveAddress();
+    const addressForTransaction =
+        (txRequest?.tx.type === 'v2' && txRequest?.tx.account) || activeAddress;
     const handleOnSubmit = useCallback(
         async (approved: boolean) => {
-            if (txRequest) {
+            if (txRequest && addressForTransaction) {
                 await dispatch(
                     respondToTransactionRequest({
                         approved,
                         txRequestID: txRequest.id,
+                        permitted: true,
+                        addressForTransaction,
                     })
                 );
             }
         },
-        [dispatch, txRequest]
+        [dispatch, txRequest, addressForTransaction]
     );
-
+    const permissionCheckLoading = useHasPermissionGuard(
+        txRequest?.origin || null,
+        addressForTransaction,
+        async () => {
+            if (txRequest) {
+                await dispatch(
+                    respondToTransactionRequest({
+                        approved: false,
+                        txRequestID: txRequest.id,
+                        permitted: false,
+                        addressForTransaction: '', // we just reject the transaction so address is not really necessary
+                    })
+                );
+            }
+            window.close();
+        }
+    );
     useEffect(() => {
+        if (permissionCheckLoading || !addressForTransaction) {
+            return;
+        }
         if (txRequest?.tx?.type === 'move-call' && !txRequest.metadata) {
             dispatch(
                 loadTransactionResponseMetadata({
@@ -127,10 +193,11 @@ export function DappTxApprovalPage() {
                 deserializeTxn({
                     serializedTxn: txRequest?.tx.data,
                     id: txRequest.id,
+                    addressForTransaction,
                 })
             );
         }
-    }, [txRequest, dispatch]);
+    }, [txRequest, dispatch, permissionCheckLoading, addressForTransaction]);
 
     const metadata = useMemo(() => {
         if (
@@ -291,23 +358,22 @@ export function DappTxApprovalPage() {
         }
     }, [txRequest]);
 
-    const address = useAppSelector(({ account: { address } }) => address);
-
     return (
-        <Loading loading={loadingState}>
-            {txRequest ? (
+        <Loading loading={loadingState || permissionCheckLoading}>
+            {txRequest && addressForTransaction ? (
                 <UserApproveContainer
                     origin={txRequest.origin}
                     originFavIcon={txRequest.originFavIcon}
                     approveTitle="Approve"
                     rejectTitle="Reject"
                     onSubmit={handleOnSubmit}
+                    address={addressForTransaction}
                 >
                     <section className={st.txInfo}>
-                        {txRequest?.tx && address && (
+                        {txRequest?.tx && (
                             <TransactionSummaryCard
                                 txRequest={txRequest}
-                                address={address}
+                                address={addressForTransaction}
                             />
                         )}
                         <Permissions metadata={metadata} />

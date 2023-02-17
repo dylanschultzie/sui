@@ -95,6 +95,7 @@ export class BackgroundClient {
     public async sendTransactionRequestResponse(
         txID: string,
         approved: boolean,
+        permitted: boolean,
         txResult?: SuiTransactionResponse,
         tsResultError?: string,
         txSigned?: SignedTransaction
@@ -107,6 +108,7 @@ export class BackgroundClient {
                 txResult,
                 tsResultError,
                 txSigned,
+                permitted,
             })
         );
     }

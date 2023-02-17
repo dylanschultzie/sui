@@ -5,14 +5,16 @@ import {
     type SignedTransaction,
     type SuiTransactionResponse,
 } from '@mysten/sui.js';
-import { type SuiSignTransactionInput } from '@mysten/wallet-standard';
 import { filter, lastValueFrom, map, race, Subject, take } from 'rxjs';
 import { v4 as uuidV4 } from 'uuid';
 import Browser from 'webextension-polyfill';
 
 import { Window } from './Window';
 
-import type { TransactionDataType } from '_messages/payloads/transactions/ExecuteTransactionRequest';
+import type {
+    SignTransactionRequest,
+    TransactionDataType,
+} from '_messages/payloads/transactions/ExecuteTransactionRequest';
 import type { TransactionRequest } from '_payloads/transactions';
 import type { TransactionRequestResponse } from '_payloads/transactions/ui/TransactionRequestResponse';
 import type { ContentScriptConnection } from '_src/background/connections/ContentScriptConnection';
@@ -35,11 +37,16 @@ class Transactions {
             sign,
         }:
             | { tx: TransactionDataType; sign?: undefined }
-            | { tx?: undefined; sign: SuiSignTransactionInput },
+            | { tx?: undefined; sign: SignTransactionRequest['transaction'] },
         connection: ContentScriptConnection
     ): Promise<SuiTransactionResponse | SignedTransaction> {
         const txRequest = this.createTransactionRequest(
-            tx ?? { type: 'v2', justSign: true, data: sign.transaction },
+            tx ?? {
+                type: 'v2',
+                justSign: true,
+                data: sign.transaction,
+                account: sign.account,
+            },
             connection.origin,
             connection.originFavIcon
         );
@@ -57,7 +64,7 @@ class Transactions {
             race(popUpClose, txResponseMessage).pipe(
                 take(1),
                 map(async (response) => {
-                    if (response) {
+                    if (response && response.permitted) {
                         const { approved, txResult, txSigned, tsResultError } =
                             response;
                         if (approved) {
@@ -83,6 +90,11 @@ class Transactions {
                         }
                     }
                     await this.removeTransactionRequest(txRequest.id);
+                    if (response && !response.permitted) {
+                        throw new Error(
+                            "Operation not allowed, dapp doesn't have the required permissions"
+                        );
+                    }
                     throw new Error('Transaction rejected from user');
                 })
             )

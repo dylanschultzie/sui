@@ -220,7 +220,7 @@ export class SuiWallet implements Wallet {
         return mapToPromise(
             this.#send<SignTransactionRequest, SignTransactionResponse>({
                 type: 'sign-transaction-request',
-                transaction: input,
+                transaction: { ...input, account: input.account.address },
             }),
             (response) => response.result
         );
@@ -236,6 +236,7 @@ export class SuiWallet implements Wallet {
                     type: 'v2',
                     data: input.transaction,
                     options: input.options,
+                    account: input.account.address,
                 },
             }),
             (response) => response.result

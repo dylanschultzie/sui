@@ -8,7 +8,11 @@ import {
 
 import { isBasePayload } from '_payloads';
 
-import type { MoveCallTransaction, SignableTransaction } from '@mysten/sui.js';
+import type {
+    MoveCallTransaction,
+    SignableTransaction,
+    SuiAddress,
+} from '@mysten/sui.js';
 import type { BasePayload, Payload } from '_payloads';
 
 export type TransactionDataType =
@@ -17,6 +21,7 @@ export type TransactionDataType =
           justSign?: boolean;
           data: SignableTransaction;
           options?: SuiSignAndExecuteTransactionOptions;
+          account: SuiAddress;
       }
     | { type: 'move-call'; data: MoveCallTransaction }
     | { type: 'serialized-move-call'; data: string };
@@ -36,7 +41,9 @@ export function isExecuteTransactionRequest(
 
 export interface SignTransactionRequest extends BasePayload {
     type: 'sign-transaction-request';
-    transaction: SuiSignTransactionInput;
+    transaction: Omit<SuiSignTransactionInput, 'account'> & {
+        account: SuiAddress;
+    };
 }
 
 export function isSignTransactionRequest(

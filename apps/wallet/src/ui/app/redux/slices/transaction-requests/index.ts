@@ -7,14 +7,13 @@ import {
     getTransactionEffects,
     LocalTxnDataSerializer,
     type SignedTransaction,
+    type SuiAddress,
 } from '@mysten/sui.js';
 import {
     createAsyncThunk,
     createEntityAdapter,
     createSlice,
 } from '@reduxjs/toolkit';
-
-import { activeAccountSelector } from '../account';
 
 import type {
     SuiMoveNormalizedFunction,
@@ -73,17 +72,15 @@ export const deserializeTxn = createAsyncThunk<
         txRequestID: string;
         unSerializedTxn: UnserializedSignableTransaction | null;
     },
-    { serializedTxn: string; id: string },
+    { serializedTxn: string; id: string; addressForTransaction: SuiAddress },
     AppThunkConfig
 >(
     'deserialize-transaction',
-    async (data, { dispatch, extra: { api, background }, getState }) => {
-        const { id, serializedTxn } = data;
-        const activeAddress = activeAccountSelector(getState());
-        if (!activeAddress) {
-            throw new Error('Error, active address is not defined');
-        }
-        const signer = api.getSignerInstance(activeAddress, background);
+    async (
+        { id, serializedTxn, addressForTransaction },
+        { dispatch, extra: { api, background }, getState }
+    ) => {
+        const signer = api.getSignerInstance(addressForTransaction, background);
         const localSerializer = new LocalTxnDataSerializer(signer.provider);
         const txnBytes = fromB64(serializedTxn);
 
@@ -129,19 +126,20 @@ export const respondToTransactionRequest = createAsyncThunk<
         approved: boolean;
         txResponse: SuiTransactionResponse | null;
     },
-    { txRequestID: string; approved: boolean },
+    {
+        txRequestID: string;
+        approved: boolean;
+        permitted: boolean;
+        addressForTransaction: SuiAddress;
+    },
     AppThunkConfig
 >(
     'respond-to-transaction-request',
     async (
-        { txRequestID, approved },
+        { txRequestID, approved, permitted, addressForTransaction },
         { extra: { background, api }, getState }
     ) => {
         const state = getState();
-        const activeAddress = activeAccountSelector(state);
-        if (!activeAddress) {
-            throw new Error('Error, active address is not defined');
-        }
         const txRequest = txRequestsSelectors.selectById(state, txRequestID);
         if (!txRequest) {
             throw new Error(`TransactionRequest ${txRequestID} not found`);
@@ -149,8 +147,11 @@ export const respondToTransactionRequest = createAsyncThunk<
         let txSigned: SignedTransaction | undefined = undefined;
         let txResult: SuiTransactionResponse | undefined = undefined;
         let tsResultError: string | undefined;
-        if (approved) {
-            const signer = api.getSignerInstance(activeAddress, background);
+        if (approved && permitted) {
+            const signer = api.getSignerInstance(
+                addressForTransaction,
+                background
+            );
             try {
                 if (txRequest.tx.type === 'v2' && txRequest.tx.justSign) {
                     // TODO: Try / catch
@@ -201,6 +202,7 @@ export const respondToTransactionRequest = createAsyncThunk<
         background.sendTransactionRequestResponse(
             txRequestID,
             approved,
+            permitted,
             txResult,
             tsResultError,
             txSigned

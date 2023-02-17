@@ -6,7 +6,7 @@ import { useParams } from 'react-router-dom';
 
 import Icon, { SuiIcons } from '_components/icon';
 import Loading from '_components/loading';
-import UserApproveContainer from '_components/user-approve-container';
+import { UserApproveContainer } from '_components/user-approve-container';
 import { useAppDispatch, useAppSelector } from '_hooks';
 import {
     permissionsSelectors,
@@ -88,6 +88,7 @@ function SiteConnectPage() {
     return (
         <Loading loading={loading}>
             {permissionRequest &&
+                activeAccount &&
                 (displayWarning ? (
                     <UserApproveContainer
                         origin={permissionRequest.origin}
@@ -97,6 +98,7 @@ function SiteConnectPage() {
                         onSubmit={handleHideWarning}
                         isWarning
                         isConnect
+                        address={activeAccount}
                     >
                         <div className={st.warningWrapper}>
                             <h1 className={st.warningTitle}>
@@ -121,6 +123,7 @@ function SiteConnectPage() {
                         rejectTitle="Cancel"
                         onSubmit={handleOnSubmit}
                         isConnect
+                        address={activeAccount}
                     >
                         <div className={st.label}>App Permissions</div>
                         <ul className={st.permissions}>
