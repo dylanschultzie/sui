@@ -39,12 +39,10 @@ import {
     useAppSelector,
     useCoinDecimals,
     useGetObject,
+    useGetCoinBalance,
 } from '_hooks';
-import {
-    accountAggregateBalancesSelector,
-    createCoinsForTypeSelector,
-} from '_redux/slices/account';
-import { Coin, GAS_TYPE_ARG } from '_redux/slices/sui-objects/Coin';
+import { createCoinsForTypeSelector } from '_redux/slices/account';
+import { Coin } from '_redux/slices/sui-objects/Coin';
 import { trackEvent } from '_src/shared/plausible';
 import { Text } from '_src/ui/app/shared/text';
 
@@ -58,9 +56,16 @@ const initialValues = {
 export type FormValues = typeof initialValues;
 
 function StakingCard() {
-    const coinType = GAS_TYPE_ARG;
+    const coinType = SUI_TYPE_ARG;
     const accountAddress = useAppSelector(({ account }) => account.address);
-    const aggregateBalances = useAppSelector(accountAggregateBalancesSelector);
+    const { data: suiBalance, isLoading: loadingSuiBalances } =
+        useGetCoinBalance({ address: accountAddress, coinType });
+
+    const coinBalance = useMemo(() => {
+        if (!suiBalance) return BigInt(0);
+        return BigInt(suiBalance.totalBalance);
+    }, [suiBalance]);
+
     const [searchParams] = useSearchParams();
     const validatorAddress = searchParams.get('address');
     const stakeIdParams = searchParams.get('staked');
@@ -91,7 +96,7 @@ function StakingCard() {
             0n
         );
     }, [allDelegation, stakeIdParams]);
-    const coinBalance = (coinType && aggregateBalances[coinType]) || 0n;
+
     const delegationData = useMemo(() => {
         if (!allDelegation) return null;
 
@@ -286,7 +291,12 @@ function StakingCard() {
     return (
         <div className="flex flex-col flex-nowrap flex-grow w-full">
             <Loading
-                loading={loadingBalance || isLoading || validatorsIsloading}
+                loading={
+                    loadingBalance ||
+                    isLoading ||
+                    validatorsIsloading ||
+                    loadingSuiBalances
+                }
             >
                 <Formik
                     initialValues={initialValues}
