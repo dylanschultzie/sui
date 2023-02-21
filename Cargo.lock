@@ -8862,6 +8862,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "sui-metrics-proxy"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-server",
+ "clap 3.2.23",
+ "const-str",
+ "fastcrypto",
+ "futures",
+ "git-version",
+ "hyper",
+ "mime",
+ "rand 0.8.5",
+ "reqwest",
+ "serde 1.0.152",
+ "serde_json",
+ "sui-tls",
+ "telemetry-subscribers",
+ "tokio",
+ "tower",
+ "tracing",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sui-move"
 version = "0.27.0"
 dependencies = [
