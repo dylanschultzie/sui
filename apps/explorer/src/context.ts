@@ -37,7 +37,7 @@ export function useNetwork(): [string, (network: Network | string) => void] {
     }, [searchParams]);
 
     const setNetwork = (network: Network | string) => {
-        // When resetting the network, we reset the query client at the same time:
+        // When resetting the network, we reset the query client at the same time: xx
         queryClient.cancelQueries();
         queryClient.clear();
 
