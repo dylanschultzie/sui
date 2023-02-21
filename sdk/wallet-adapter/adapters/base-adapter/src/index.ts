@@ -1,17 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SignedTransaction, SuiTransactionResponse } from "@mysten/sui.js";
 import {
-  ExecuteTransactionRequestType,
-  SignableTransaction,
-  SignedTransaction,
-  SuiAddress,
-  SuiTransactionResponse,
-} from "@mysten/sui.js";
+  SuiSignTransactionInput,
+  SuiSignAndExecuteTransactionInput,
+  ReadonlyWalletAccount,
+} from "@mysten/wallet-standard";
 
 export interface WalletAdapterEvents {
-  change(changes: { connected?: boolean; accounts?: SuiAddress[] }): void;
+  change(changes: {
+    connected?: boolean;
+    accounts?: ReadonlyWalletAccount[];
+  }): void;
 }
+
+type WithOptionalChain<T extends { chain: SuiSignTransactionInput["chain"] }> =
+  Omit<T, "chain"> & Partial<Pick<T, "chain">>;
 
 export interface WalletAdapter {
   // Metadata
@@ -27,18 +32,17 @@ export interface WalletAdapter {
     event: E,
     callback: WalletAdapterEvents[E]
   ) => () => void;
-  signTransaction(transaction: SignableTransaction): Promise<SignedTransaction>;
+  signTransaction(
+    transactionInput: WithOptionalChain<SuiSignTransactionInput>
+  ): Promise<SignedTransaction>;
   /**
    * Suggest a transaction for the user to sign. Supports all valid transaction types.
    */
   signAndExecuteTransaction(
-    transaction: SignableTransaction,
-    options?: {
-      requestType?: ExecuteTransactionRequestType;
-    }
+    transactionInput: WithOptionalChain<SuiSignAndExecuteTransactionInput>
   ): Promise<SuiTransactionResponse>;
 
-  getAccounts: () => Promise<SuiAddress[]>;
+  getAccounts: () => Promise<ReadonlyWalletAccount[]>;
 }
 
 type WalletAdapterProviderUnsubscribe = () => void;

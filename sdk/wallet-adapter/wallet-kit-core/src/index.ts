@@ -195,12 +195,15 @@ export function createWalletKitCore({
             if (connected === false) {
               disconnected();
             } else if (accounts) {
+              const newAccountsAddresses = accounts.map(
+                ({ address }) => address
+              );
               setState({
-                accounts,
+                accounts: newAccountsAddresses,
                 currentAccount:
                   internalState.currentAccount &&
-                  !accounts.includes(internalState.currentAccount)
-                    ? accounts[0]
+                  !newAccountsAddresses.includes(internalState.currentAccount)
+                    ? newAccountsAddresses[0]
                     : internalState.currentAccount,
               });
             }
@@ -214,7 +217,9 @@ export function createWalletKitCore({
             await storageAdapter.set(storageKey, currentWallet.name);
           } catch {}
           // TODO: Rather than using this method, we should just standardize the wallet properties on the adapter itself:
-          const accounts = await currentWallet.getAccounts();
+          const accounts = await (
+            await currentWallet.getAccounts()
+          ).map(({ address }) => address);
           // TODO: Implement account selection:
 
           setState({ accounts, currentAccount: accounts[0] ?? null });
@@ -240,26 +245,39 @@ export function createWalletKitCore({
       disconnected();
     },
 
-    signTransaction(transaction) {
-      if (!internalState.currentWallet) {
-        throw new Error(
-          "No wallet is currently connected, cannot call `signAndExecuteTransaction`."
+    async signTransaction(transaction) {
+      if (internalState.currentWallet && internalState.currentAccount) {
+        const account = (await internalState.currentWallet.getAccounts()).find(
+          ({ address }) => internalState.currentAccount === address
         );
+        if (account) {
+          return internalState.currentWallet.signTransaction({
+            transaction,
+            account,
+            chain: account.chains[0],
+          });
+        }
       }
-
-      return internalState.currentWallet.signTransaction(transaction);
+      throw new Error(
+        "No wallet is currently connected, cannot call `signAndExecuteTransaction`."
+      );
     },
 
-    signAndExecuteTransaction(transaction, options) {
-      if (!internalState.currentWallet) {
-        throw new Error(
-          "No wallet is currently connected, cannot call `signAndExecuteTransaction`."
+    async signAndExecuteTransaction(transaction, options) {
+      if (internalState.currentWallet && internalState.currentAccount) {
+        const account = (await internalState.currentWallet.getAccounts()).find(
+          ({ address }) => internalState.currentAccount === address
         );
+        if (account) {
+          return internalState.currentWallet.signAndExecuteTransaction({
+            transaction,
+            account,
+            options,
+          });
+        }
       }
-
-      return internalState.currentWallet.signAndExecuteTransaction(
-        transaction,
-        options
+      throw new Error(
+        "No wallet is currently connected, cannot call `signAndExecuteTransaction`."
       );
     },
   };

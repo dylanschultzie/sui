@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  ExecuteTransactionRequestType,
-  SignableTransaction,
-} from "@mysten/sui.js";
-import {
   WalletAdapter,
   WalletAdapterEvents,
 } from "@mysten/wallet-adapter-base";
-import { StandardWalletAdapterWallet } from "@mysten/wallet-standard";
+import {
+  ReadonlyWalletAccount,
+  StandardWalletAdapterWallet,
+} from "@mysten/wallet-standard";
 import mitt from "mitt";
 
 export interface StandardWalletAdapterConfig {
@@ -45,7 +44,9 @@ export class StandardWalletAdapter implements WalletAdapter {
   }
 
   async getAccounts() {
-    return this.#wallet.accounts.map((account) => account.address);
+    return this.#wallet.accounts.map(
+      (account) => new ReadonlyWalletAccount(account)
+    );
   }
 
   async connect() {
@@ -89,23 +90,31 @@ export class StandardWalletAdapter implements WalletAdapter {
     }
   }
 
-  async signTransaction(transaction: SignableTransaction) {
+  signTransaction: WalletAdapter["signTransaction"] = (transactionInput) => {
+    let chain = transactionInput.chain || transactionInput.account.chains[0];
+    if (!chain) {
+      throw new Error("Transaction chain not found");
+    }
     return this.#wallet.features["sui:signTransaction"].signTransaction({
-      transaction,
+      ...transactionInput,
+      chain,
     });
-  }
+  };
 
-  async signAndExecuteTransaction(
-    transaction: SignableTransaction,
-    options?: { requestType?: ExecuteTransactionRequestType }
-  ) {
+  signAndExecuteTransaction: WalletAdapter["signAndExecuteTransaction"] = (
+    transactionInput
+  ) => {
+    let chain = transactionInput.chain || transactionInput.account.chains[0];
+    if (!chain) {
+      throw new Error("Transaction chain not found");
+    }
     return this.#wallet.features[
       "sui:signAndExecuteTransaction"
     ].signAndExecuteTransaction({
-      transaction,
-      options,
+      ...transactionInput,
+      chain,
     });
-  }
+  };
 
   on: <E extends keyof WalletAdapterEvents>(
     event: E,
