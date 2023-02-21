@@ -2062,6 +2062,31 @@ impl AuthorityState {
         }
     }
 
+    pub async fn get_transactions_batch(
+        &self,
+        digests: &[TransactionDigest],
+    ) -> Result<Vec<(VerifiedCertificate, TransactionEffects)>, anyhow::Error> {
+        let certs = self.database.multi_get_certified_transaction(&digests)?;
+        let effects = self.database.multi_get_executed_effects(&digests)?;
+        let mut response: Vec<(VerifiedCertificate, TransactionEffects)>  = Vec::new();
+
+        if certs.len() == effects.len() {
+
+            for i in 0..certs.len() {
+                match ( certs[i].clone(), effects[i].clone() ){
+                    (Some(cert), Some(effect)) => response.push((cert, effect)),
+                    _ => continue,
+                }
+            }
+        }
+
+        if response.is_empty(){
+            Err(anyhow!(SuiError::NoBatchesFoundError))
+        } else {
+        Ok(response)
+        }
+    }
+
     fn get_indexes(&self) -> SuiResult<Arc<IndexStore>> {
         match &self.indexes {
             Some(i) => Ok(i.clone()),
