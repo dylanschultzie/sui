@@ -24,6 +24,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use fastcrypto::hash::Digest;
 use futures::stream::FuturesOrdered;
 use itertools::izip;
 use mysten_metrics::spawn_monitored_task;
@@ -117,7 +118,10 @@ impl CheckpointExecutor {
     /// Return the committee of the next epoch.
     /// We don't technically need &mut on self, but passing it to make sure only one instance is
     /// running at one time.
-    pub async fn run_epoch(&mut self, epoch_store: Arc<AuthorityPerEpochStore>) -> Committee {
+    pub async fn run_epoch(
+        &mut self,
+        epoch_store: Arc<AuthorityPerEpochStore>,
+    ) -> (Committee, Digest<32>) {
         debug!(
             "Checkpoint executor running for epoch {}",
             epoch_store.epoch(),
@@ -144,7 +148,7 @@ impl CheckpointExecutor {
         let mut pending: CheckpointExecutionBuffer = FuturesOrdered::new();
         loop {
             // If we have executed the last checkpoint of the current epoch, stop.
-            if let Some(next_epoch_committee) =
+            if let Some((next_epoch_committee, root_state_digest)) =
                 check_epoch_last_checkpoint(epoch_store.epoch(), &highest_executed)
             {
                 // be extra careful to ensure we don't have orphans
@@ -152,7 +156,7 @@ impl CheckpointExecutor {
                     pending.is_empty(),
                     "Pending checkpoint execution buffer should be empty after processing last checkpoint of epoch",
                 );
-                return next_epoch_committee;
+                return (next_epoch_committee, root_state_digest);
             }
             self.schedule_synced_checkpoints(
                 &mut pending,
@@ -322,7 +326,7 @@ impl CheckpointExecutor {
 fn check_epoch_last_checkpoint(
     cur_epoch: EpochId,
     checkpoint: &Option<VerifiedCheckpoint>,
-) -> Option<Committee> {
+) -> Option<(Committee, Digest<32>)> {
     if let Some(checkpoint) = checkpoint {
         if checkpoint.epoch() == cur_epoch {
             if let Some(EndOfEpochData {
@@ -338,14 +342,21 @@ fn check_epoch_last_checkpoint(
                     "Reached end of epoch",
                 );
                 let next_epoch = cur_epoch + 1;
-                return Some(
+
+                return Some((
                     Committee::new(
                         next_epoch,
                         *next_epoch_protocol_version,
                         next_epoch_committee.iter().cloned().collect(),
                     )
                     .expect("Creating new committee object cannot fail"),
-                );
+                    checkpoint
+                        .summary()
+                        .clone()
+                        .end_of_epoch_data
+                        .expect("EndOfEpochData should exist in last checkpoint of epoch")
+                        .root_state_digest,
+                ));
             }
         }
     }

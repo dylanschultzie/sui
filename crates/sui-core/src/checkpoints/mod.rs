@@ -15,13 +15,11 @@ pub use crate::checkpoints::checkpoint_output::{
 pub use crate::checkpoints::metrics::CheckpointMetrics;
 use crate::stake_aggregator::{InsertResult, StakeAggregator};
 use crate::state_accumulator::StateAccumulator;
-use fastcrypto::hash::MultisetHash;
 use futures::future::{select, Either};
 use futures::FutureExt;
 use mysten_metrics::{monitored_scope, spawn_monitored_task, MonitoredFutureExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use sui_types::accumulator::Accumulator;
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use std::collections::HashSet;
@@ -648,21 +646,19 @@ impl CheckpointBuilder {
                     .await?;
 
                 let committee = system_state_obj.get_current_epoch_committee().committee;
-                let root_state_digest = Some(
-                    self.accumulator
-                        .digest_epoch(&epoch, sequence_number, self.epoch_store.clone())
-                        .in_monitored_scope("CheckpointBuilder::digest_epoch")
-                        .await?,
-                );
-                self.metrics.highest_accumulated_epoch.set(epoch as i64);
+                let root_state_digest = self
+                    .accumulator
+                    .digest_epoch(&epoch, sequence_number, self.epoch_store.clone())
+                    .in_monitored_scope("CheckpointBuilder::digest_epoch")
+                    .await?;
+                debug!("Epoch {epoch} root state hash digest: {root_state_digest:?}");
 
-                // for now, just log this value, and insert default val into checkpoint summary
-                info!("Epoch {epoch} root state hash digest: {root_state_digest:?}");
+                self.metrics.highest_accumulated_epoch.set(epoch as i64);
 
                 Some(EndOfEpochData {
                     next_epoch_committee: committee.voting_rights,
                     next_epoch_protocol_version: committee.protocol_version,
-                    root_state_digest: Accumulator::default().digest(),
+                    root_state_digest,
                 })
             } else {
                 None

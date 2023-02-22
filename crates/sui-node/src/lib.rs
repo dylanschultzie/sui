@@ -741,8 +741,8 @@ impl SuiNode {
             .ok_or_else(|| anyhow::anyhow!("Transaction Orchestrator is not enabled in this node."))
     }
 
-    /// This function waits for a signal from the checkpoint executor to indicate that on-chain
-    /// epoch has changed. Upon receiving such signal, we reconfigure the entire system.
+    /// This function awaits the completion of checkpoint execution of the current epoch,
+    /// after which it iniitiates reconfiguration of the entire system.
     pub async fn monitor_reconfiguration(self: Arc<Self>) -> Result<()> {
         let mut checkpoint_executor = CheckpointExecutor::new(
             self.state_sync.subscribe_to_synced_checkpoints(),
@@ -756,7 +756,9 @@ impl SuiNode {
 
         loop {
             let cur_epoch_store = self.state.load_epoch_store_one_call_per_task();
-            let next_epoch_committee = checkpoint_executor.run_epoch(cur_epoch_store.clone()).await;
+            let (next_epoch_committee, _root_state_digest) =
+                checkpoint_executor.run_epoch(cur_epoch_store.clone()).await;
+
             let next_epoch = next_epoch_committee.epoch();
             assert_eq!(cur_epoch_store.epoch() + 1, next_epoch);
             let system_state = self
@@ -803,6 +805,17 @@ impl SuiNode {
                 let new_epoch_store = self
                     .reconfigure_state(&cur_epoch_store, next_epoch_committee, system_state)
                     .await;
+
+                // at this point we have processed tx reverts, and therefore the
+                // live object set is well defined
+                cfg_if::cfg_if! {
+                    if #[cfg(msim)] {
+                        let mut live_object_set = self.state.perpetual_tables.iter_live_object_set().collect();
+                        let acc = Accumulator::default();
+                        acc.insert_all(live_object_set);
+                        assert_eq!(acc.digest(), _root_state_digest);
+                    }
+                }
 
                 narwhal_epoch_data_remover
                     .remove_old_data(next_epoch - 1)
