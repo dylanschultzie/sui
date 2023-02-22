@@ -348,6 +348,10 @@ impl SuiNode {
         Ok(())
     }
 
+    pub fn set_force_protocol_upgrade(&self, enable: bool) -> SuiResult {
+        self.state.set_force_protocol_upgrade(enable)
+    }
+
     // Testing-only API to start epoch close process.
     // For production code, please use the non-testing version.
     pub async fn close_epoch_for_testing(&self) -> SuiResult {

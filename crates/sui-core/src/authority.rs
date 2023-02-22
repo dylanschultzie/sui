@@ -2552,6 +2552,14 @@ impl AuthorityState {
         self.database.get_latest_parent_entry(object_id)
     }
 
+    /// If called, the validator will unconditionally vote for the next protocol version that it
+    /// supports. If this is used, it must be used on >=2f+1 validators, or you risk halting the
+    /// chain.
+    pub fn set_force_protocol_upgrade(&self, enable: bool) -> SuiResult {
+        let epoch_store = self.load_epoch_store_one_call_per_task();
+        epoch_store.set_force_protocol_upgrade(enable)
+    }
+
     /// Creates and execute the advance epoch transaction to effects without committing it to the database.
     /// The effects of the change epoch tx are only written to the database after a certified checkpoint has been
     /// formed and executed by CheckpointExecutor.
@@ -2569,11 +2577,15 @@ impl AuthorityState {
         // Determine which protocol version to propose for the following epoch.
         let current_protocol_version = epoch_store.committee().protocol_version;
         let next_protocol_version = current_protocol_version + 1;
-        let next_epoch_protocol_version = if self
-            .supported_protocol_versions
-            .is_version_supported(next_protocol_version)
-        {
-            // we support the next version, check if enough other validators do as well.
+
+        let next_epoch_protocol_version = if epoch_store.get_force_protocol_upgrade() {
+            info!(
+                "force_protocol_upgrade was set, voting for protocol version {:?}",
+                next_protocol_version
+            );
+            next_protocol_version
+        } else {
+            // check if enough validators support the next version.
             let mut stake_aggregator: StakeAggregator<bool, true> =
                 StakeAggregator::new(Arc::new(epoch_store.committee().clone()));
 
@@ -2633,8 +2645,15 @@ impl AuthorityState {
             } else {
                 current_protocol_version
             }
+        };
+
+        // check if we support the next version.
+        let next_epoch_protocol_version = if self
+            .supported_protocol_versions
+            .is_version_supported(next_epoch_protocol_version)
+        {
+            next_epoch_protocol_version
         } else {
-            // we don't support the next version, so we won't vote for it.
             current_protocol_version
         };
 

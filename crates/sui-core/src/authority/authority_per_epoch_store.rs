@@ -69,6 +69,7 @@ use typed_store_derive::DBMapUtils;
 const LAST_CONSENSUS_INDEX_ADDR: u64 = 0;
 const RECONFIG_STATE_INDEX: u64 = 0;
 const FINAL_EPOCH_CHECKPOINT_INDEX: u64 = 0;
+const FORCE_PROTOCOL_UPGRADE_INDEX: u64 = 0;
 pub const EPOCH_DB_PREFIX: &str = "epoch_";
 
 pub struct CertLockGuard(LockGuard);
@@ -258,6 +259,9 @@ pub struct AuthorityEpochTables {
 
     /// Record of the capabilities advertised by each authority.
     authority_capabilities: DBMap<AuthorityName, AuthorityCapabilities>,
+
+    /// Contains a single key, which stores whether the next protocol upgrade should be forced.
+    force_protocol_upgrade: DBMap<u64, bool>,
 }
 
 /// Parameters of the epoch fixed at epoch start.
@@ -975,6 +979,21 @@ impl AuthorityPerEpochStore {
             result.push(signatures);
         }
         Ok(result)
+    }
+
+    pub fn set_force_protocol_upgrade(&self, enable: bool) -> SuiResult {
+        self.tables
+            .force_protocol_upgrade
+            .insert(&FORCE_PROTOCOL_UPGRADE_INDEX, &enable)?;
+        Ok(())
+    }
+
+    pub fn get_force_protocol_upgrade(&self) -> bool {
+        self.tables
+            .force_protocol_upgrade
+            .get(&FORCE_PROTOCOL_UPGRADE_INDEX)
+            .expect("force_protocol_upgrade read cannot fail")
+            .unwrap_or(false)
     }
 
     /// Record most recently advertised capabilities of all authorities
