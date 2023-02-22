@@ -179,6 +179,7 @@ impl SuiNode {
             None,
             EpochMetrics::new(&registry_service.default_registry()),
             epoch_start_configuration,
+            store.clone(),
         );
 
         let checkpoint_store = CheckpointStore::new(&config.db_path().join("checkpoints"));
@@ -275,6 +276,7 @@ impl SuiNode {
             &transaction_orchestrator.clone(),
             &config,
             &prometheus_registry,
+            &epoch_store,
         )
         .await?;
 
@@ -899,6 +901,7 @@ pub async fn build_server(
     transaction_orchestrator: &Option<Arc<TransactiondOrchestrator<NetworkAuthorityClient>>>,
     config: &NodeConfig,
     prometheus_registry: &Registry,
+    epoch_store: &Arc<AuthorityPerEpochStore>,
 ) -> Result<Option<ServerHandle>> {
     // Validators do not expose these APIs
     if config.consensus_config().is_some() {
@@ -917,7 +920,7 @@ pub async fn build_server(
         server.register_module(TransactionExecutionApi::new(
             state.clone(),
             transaction_orchestrator.clone(),
-            state.module_cache.clone(),
+            epoch_store.module_cache().clone(),
         ))?;
     }
 
