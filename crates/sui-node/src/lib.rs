@@ -286,15 +286,15 @@ impl SuiNode {
         )
         .await?;
 
-        let system_state = state
-            .get_sui_system_state_object()
-            .expect("Reading Sui system state object cannot fail");
-        // Spawn connectivity monitor for network
+        let peer_ids = epoch_store
+            .epoch_start_configuration()
+            .system_state
+            .get_current_epoch_peer_ids();
 
-        let peer_ids = system_state.get_current_epoch_peer_ids();
-
-        let authority_names_to_peer_ids =
-            system_state.get_current_epoch_authority_names_to_peer_ids();
+        let authority_names_to_peer_ids = epoch_store
+            .epoch_start_configuration()
+            .system_state
+            .get_current_epoch_authority_names_to_peer_ids();
 
         let network_connection_metrics =
             NetworkConnectionMetrics::new("sui", &registry_service.default_registry());

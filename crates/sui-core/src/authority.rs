@@ -1794,7 +1794,8 @@ impl AuthorityState {
             .compute_object_reference())
     }
 
-    // TODO: Audit every call to this function to make sure there are no data races during reconfig.
+    // Instead of this function use AuthorityEpochStore::epoch_start_configuration() to access this object everywhere
+    // besides when we are reading fields for the current epoch
     pub fn get_sui_system_state_object(&self) -> SuiResult<SuiSystemState> {
         self.database.get_sui_system_state_object()
     }
