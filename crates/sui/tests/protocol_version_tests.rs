@@ -121,6 +121,63 @@ async fn test_protocol_version_upgrade_no_quorum() {
     monitor_version_change(&test_cluster, 1 /* expected proto version */).await;
 }
 
+// Test what happens when there is a quorum, but too many validators don't support the upgrade.
+#[sim_test]
+async fn test_protocol_version_non_supported() {
+    telemetry_subscribers::init_for_testing();
+    sui_protocol_config::apply_overrides_for_testing(|_, mut config| {
+        config.set_max_non_supporting_validators_for_protocol_upgrade(0);
+        config
+    });
+    sui_protocol_config::ProtocolConfig::poison_get_for_min_version();
+
+    let test_cluster = TestClusterBuilder::new()
+        .with_epoch_duration_ms(10000)
+        .with_supported_protocol_version_callback(Arc::new(|idx, name| {
+            if name.is_some() && idx == 0 {
+                // first validator only does not support version 2.
+                SupportedProtocolVersions::new_for_testing(1, 1)
+            } else {
+                SupportedProtocolVersions::new_for_testing(1, 2)
+            }
+        }))
+        .build()
+        .await
+        .unwrap();
+
+    monitor_version_change(&test_cluster, 1 /* expected proto version */).await;
+}
+
+// Test what happens when there is a quorum, but too many validators don't support the upgrade.
+#[sim_test]
+async fn test_protocol_version_non_supported_but_forced() {
+    telemetry_subscribers::init_for_testing();
+    sui_protocol_config::apply_overrides_for_testing(|_, mut config| {
+        config.set_max_non_supporting_validators_for_protocol_upgrade(0);
+        config
+    });
+    sui_protocol_config::ProtocolConfig::poison_get_for_min_version();
+
+    let test_cluster = TestClusterBuilder::new()
+        .with_epoch_duration_ms(10000)
+        .with_supported_protocol_version_callback(Arc::new(|idx, name| {
+            if name.is_some() && idx == 0 {
+                // first validator only does not support version 2.
+                SupportedProtocolVersions::new_for_testing(1, 1)
+            } else {
+                SupportedProtocolVersions::new_for_testing(1, 2)
+            }
+        }))
+        .build()
+        .await
+        .unwrap();
+
+    test_cluster
+        .swarm
+        .monitor_version_change(&test_cluster, 1 /* expected proto version */)
+        .await;
+}
+
 async fn monitor_version_change(test_cluster: &TestCluster, final_version: u64) {
     let mut epoch_rx = test_cluster
         .fullnode_handle

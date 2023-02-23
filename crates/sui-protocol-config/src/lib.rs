@@ -543,6 +543,9 @@ impl ProtocolConfig {
     pub fn set_max_function_definitions_for_testing(&mut self, m: usize) {
         self.max_function_definitions = Some(m)
     }
+    pub fn set_max_non_supporting_validators_for_protocol_upgrade(&mut self, m: u32) {
+        self.max_non_supporting_validators_for_protocol_upgrade = Some(m);
+    }
 }
 
 type OverrideFn = dyn Fn(ProtocolVersion, ProtocolConfig) -> ProtocolConfig + Send;
