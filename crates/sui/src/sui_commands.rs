@@ -9,6 +9,7 @@ use std::{fs, io};
 use anyhow::{anyhow, bail};
 use clap::*;
 use fastcrypto::traits::KeyPair;
+use move_cli::base;
 use move_package::BuildConfig;
 use tracing::info;
 
@@ -224,7 +225,14 @@ impl SuiCommand {
                 package_path,
                 build_config,
                 cmd,
-            } => execute_move_command(package_path, build_config, cmd),
+            } => {
+                // Resolve Move.lock file
+                let rerooted_path = base::reroot_path(package_path.clone())?;
+                let lock_file_path = rerooted_path.join("Move.lock");
+                let mut build_config = build_config;
+                build_config.lock_file = Some(lock_file_path);
+                execute_move_command(package_path, build_config, cmd)
+            }
         }
     }
 }

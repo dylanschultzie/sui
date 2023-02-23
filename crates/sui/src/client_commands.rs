@@ -19,6 +19,7 @@ use fastcrypto::{
     encoding::{Base64, Encoding},
     traits::ToFromBytes,
 };
+use move_cli::base;
 use move_core_types::language_storage::TypeTag;
 use move_package::BuildConfig as MoveBuildConfig;
 use prettytable::Table;
@@ -465,6 +466,12 @@ impl SuiClientCommands {
             } => {
                 let sender = context.try_get_object_owner(&gas).await?;
                 let sender = sender.unwrap_or(context.active_address()?);
+
+                // Resolve Move.lock file
+                let rerooted_path = base::reroot_path(Some(package_path.clone()))?;
+                let lock_file_path = rerooted_path.join("Move.lock");
+                let mut build_config = build_config;
+                build_config.lock_file = Some(lock_file_path);
 
                 let compiled_package = build_move_package(
                     &package_path,
@@ -1003,6 +1010,12 @@ impl SuiClientCommands {
                         "Source skipped and not verifying deps: Nothing to verify."
                     ));
                 }
+
+                // Resolve Move.lock file
+                let rerooted_path = base::reroot_path(Some(package_path.clone()))?;
+                let lock_file_path = rerooted_path.join("Move.lock");
+                let mut build_config = build_config;
+                build_config.lock_file = Some(lock_file_path);
 
                 let compiled_package = build_move_package(
                     &package_path,
