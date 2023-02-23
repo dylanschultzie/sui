@@ -130,6 +130,7 @@ export const Button = forwardRef(
                 ref={ref}
                 className={styles({ variant, size })}
                 {...otherProps}
+                disabled={disabled}
             >
                 {before ? (
                     <div className={iconStyles({ variant })}>{before}</div>
