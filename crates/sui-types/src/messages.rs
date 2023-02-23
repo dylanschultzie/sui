@@ -1698,7 +1698,7 @@ pub type VerifiedCertificate = VerifiedEnvelope<SenderSignedData, AuthorityStron
 pub type TrustedCertificate = TrustedEnvelope<SenderSignedData, AuthorityStrongQuorumSignInfo>;
 
 pub type VerifiedTransactionBatch = Vec<(
-    (VerifiedCertificate, TransactionEffects),
+    (VerifiedTransaction, TransactionEffects),
     Option<(EpochId, CheckpointSequenceNumber)>,
 )>;
 
